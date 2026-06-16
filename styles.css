@@ -162,7 +162,6 @@ p {
   display: grid;
   grid-template-columns: repeat(3, 46px);
   gap: 8px;
-  width: max-content;
   margin: 0 auto;
   padding: 0;
   border: 0;
@@ -458,17 +457,7 @@ p {
     margin-bottom: 6px;
   }
 
-  .controls {
-    width: min(60vw, 340px);
-  }
-
   button {
     min-height: 36px;
-  }
-}
-
-@media (min-width: 760px) {
-  .controls {
-    width: 360px;
   }
 }
