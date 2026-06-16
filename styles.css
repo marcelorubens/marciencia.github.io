@@ -161,6 +161,7 @@ p {
   z-index: 2500;
   display: grid;
   grid-template-columns: repeat(3, 46px);
+  justify-content: center;
   gap: 8px;
   margin: 0 auto;
   padding: 0;
