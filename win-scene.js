@@ -1,4 +1,6 @@
 import * as THREE from "./vendor/three.module.min.js";
+import { GLTFLoader } from "./vendor/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "./vendor/libs/meshopt_decoder.module.js";
 
 const overlay = document.querySelector("#winOverlay");
 const mount = document.querySelector("#winScene");
@@ -11,9 +13,16 @@ if (overlay && previewWin) {
 }
 
 if (overlay && mount && !reduceMotion.matches) {
-  initWinScene().catch(() => {
-    overlay.classList.remove("three-ready");
-  });
+  let initialization;
+  const ensureScene = () => {
+    if (!overlay.classList.contains("show") || initialization) return;
+    initialization = initWinScene().catch(() => {
+      overlay.classList.remove("three-ready");
+    });
+  };
+  const activationObserver = new MutationObserver(ensureScene);
+  activationObserver.observe(overlay, { attributes: true, attributeFilter: ["class"] });
+  ensureScene();
 }
 
 async function initWinScene() {
@@ -35,16 +44,17 @@ async function initWinScene() {
   rimLight.position.set(-5, 2, -4);
   scene.add(rimLight);
 
-  const [catTexture, cardBackTexture] = await Promise.all([
+  const [catTexture, cardBackTexture, mocapData] = await Promise.all([
     loadTexture("assets/favicon-cat.jpg", renderer),
     loadTexture("assets/card-back.jpg", renderer),
+    loadMouseyMocap(),
   ]);
 
   const card = createCard(cardBackTexture);
   card.position.y = -0.25;
   scene.add(card);
 
-  const dancer = createDancer(catTexture);
+  const dancer = createRiggedDancer(mocapData, catTexture, cardBackTexture);
   scene.add(dancer.group);
 
   let frameId = 0;
@@ -67,32 +77,13 @@ async function initWinScene() {
 
   function update(time) {
     const orbit = time * 0.48;
-    const beat = time * 4.4;
-    const bounce = Math.abs(Math.sin(beat)) * 0.11;
 
     card.rotation.y = time * 0.78;
     card.rotation.z = Math.sin(time * 0.7) * 0.035;
 
-    dancer.group.position.set(Math.cos(orbit) * 2.38, -0.42 + bounce, Math.sin(orbit) * 1.65);
-    dancer.group.rotation.y = Math.sin(orbit) * 0.12;
-    dancer.body.rotation.z = Math.sin(beat * 0.5) * 0.12;
-    dancer.body.rotation.y = Math.sin(beat * 0.25) * 0.12;
-    dancer.head.rotation.z = Math.sin(beat * 0.5 + 0.4) * 0.15;
-    dancer.head.position.y = 1.2 + bounce * 0.35;
-
-    dancer.leftArm.rotation.x = Math.sin(beat) * 0.82;
-    dancer.rightArm.rotation.x = -Math.sin(beat) * 0.82;
-    dancer.leftArm.rotation.z = 0.48 + Math.sin(beat * 0.5) * 0.42;
-    dancer.rightArm.rotation.z = -0.48 - Math.sin(beat * 0.5) * 0.42;
-    dancer.leftForearm.rotation.x = -0.55 - Math.max(0, Math.sin(beat)) * 0.72;
-    dancer.rightForearm.rotation.x = -0.55 - Math.max(0, -Math.sin(beat)) * 0.72;
-
-    dancer.leftLeg.rotation.x = -Math.sin(beat) * 0.62;
-    dancer.rightLeg.rotation.x = Math.sin(beat) * 0.62;
-    dancer.leftLeg.rotation.z = 0.08 + Math.sin(beat * 0.5) * 0.1;
-    dancer.rightLeg.rotation.z = -0.08 - Math.sin(beat * 0.5) * 0.1;
-    dancer.leftKnee.rotation.x = Math.max(0, Math.sin(beat)) * 0.72;
-    dancer.rightKnee.rotation.x = Math.max(0, -Math.sin(beat)) * 0.72;
+    dancer.group.position.set(Math.cos(orbit) * 2.38, -0.42, Math.sin(orbit) * 1.65);
+    dancer.group.rotation.y = time * 0.28;
+    dancer.mixer.setTime(time % dancer.duration);
   }
 
   function renderFrame(now) {
@@ -137,6 +128,13 @@ async function loadTexture(path, renderer) {
   }
 }
 
+async function loadMouseyMocap() {
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  const gltf = await loader.loadAsync("vendor/motions/mousey-snake-hip-hop.glb");
+  const clip = gltf.animations.find((animation) => animation.tracks.length > 0);
+  return { root: gltf.scene, clip };
+}
+
 function createCard(backTexture) {
   const group = new THREE.Group();
   const width = 2.24;
@@ -147,7 +145,7 @@ function createCard(backTexture) {
     geometry,
     new THREE.MeshStandardMaterial({ map: frontTexture, roughness: 0.72, metalness: 0.02 }),
   );
-  front.position.z = 0.075;
+  front.position.z = 0.004;
 
   const back = new THREE.Mesh(
     geometry,
@@ -158,117 +156,175 @@ function createCard(backTexture) {
       metalness: 0.02,
     }),
   );
-  back.position.z = -0.075;
+  back.position.z = -0.004;
   back.rotation.y = Math.PI;
 
-  const edge = new THREE.Mesh(
-    new THREE.BoxGeometry(width - 0.04, height - 0.04, 0.14),
-    new THREE.MeshStandardMaterial({ color: 0xe8dccb, roughness: 0.8 }),
-  );
-
-  group.add(edge, front, back);
+  group.add(front, back);
   return group;
 }
 
-function createDancer(catTexture) {
+function createRiggedDancer(mocapData, catTexture, duvetTexture) {
   const group = new THREE.Group();
-  const body = new THREE.Group();
-  group.add(body);
+  const model = mocapData.root;
+  const fabricTexture = createFabricTexture(duvetTexture);
+  const headTexture = createCatHeadTexture(catTexture);
+  const floral = new THREE.MeshStandardMaterial({
+    map: fabricTexture,
+    color: fabricTexture ? 0xffffff : 0xd7b6ae,
+    roughness: 0.88,
+  });
 
-  const jacket = new THREE.MeshStandardMaterial({ color: 0xa4414b, roughness: 0.78 });
-  const shirt = new THREE.MeshStandardMaterial({ color: 0xf0dfc7, roughness: 0.82 });
-  const trousers = new THREE.MeshStandardMaterial({ color: 0x223f3b, roughness: 0.86 });
-  const gold = new THREE.MeshStandardMaterial({ color: 0xd6a64f, roughness: 0.58, metalness: 0.18 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x182521, roughness: 0.9 });
-  const fur = new THREE.MeshStandardMaterial({ color: 0x9b806b, roughness: 0.9 });
+  model.traverse((node) => {
+    if (!node.isSkinnedMesh) return;
+    removeNativeHead(node);
+    node.material = floral;
+    node.frustumCulled = false;
+  });
 
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.46, 0.78, 7, 14), jacket);
-  torso.position.y = 0.18;
-  torso.scale.z = 0.64;
-  body.add(torso);
+  const headBone = model.getObjectByName("mixamorigHead");
+  if (headBone) headBone.add(createRiggedCatHead(headTexture));
 
-  const shirtPanel = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.72, 0.05), shirt);
-  shirtPanel.position.set(0, 0.22, 0.4);
-  body.add(shirtPanel);
+  model.scale.setScalar(0.0235);
+  model.position.y = -1.65;
+  group.add(model);
 
-  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.43, 0.43, 0.12, 16), dark);
-  belt.position.y = -0.45;
-  body.add(belt);
-  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.06), gold);
-  buckle.position.set(0, -0.45, 0.42);
-  body.add(buckle);
+  const mixer = new THREE.AnimationMixer(model);
+  const action = mixer.clipAction(mocapData.clip);
+  action.setLoop(THREE.LoopRepeat, Infinity);
+  action.play();
 
-  const head = new THREE.Group();
-  head.position.y = 1.2;
-  body.add(head);
-  const headBase = new THREE.Mesh(new THREE.SphereGeometry(0.54, 20, 14), fur);
-  headBase.scale.set(1, 0.92, 0.82);
-  head.add(headBase);
+  return { group, mixer, duration: mocapData.clip.duration };
+}
 
-  const face = new THREE.Mesh(
-    new THREE.CircleGeometry(0.5, 32),
-    new THREE.MeshBasicMaterial({
-      map: catTexture,
-      color: catTexture ? 0xffffff : 0xc3a58d,
-      toneMapped: false,
-    }),
-  );
-  face.position.z = 0.47;
-  head.add(face);
+function createRiggedCatHead(headTexture) {
+  const group = new THREE.Group();
+  group.position.set(0, 8.5, 3);
+  group.scale.setScalar(0.5);
 
-  const earGeometry = new THREE.ConeGeometry(0.25, 0.58, 3);
+  const fur = new THREE.MeshStandardMaterial({
+    map: headTexture,
+    color: headTexture ? 0xffffff : 0x9b806b,
+    roughness: 0.9,
+  });
+  const head = new THREE.Mesh(new THREE.SphereGeometry(26, 32, 22), fur);
+  head.scale.set(1, 0.92, 0.82);
+  group.add(head);
+
+  const earGeometry = new THREE.ConeGeometry(9, 22, 3);
   const leftEar = new THREE.Mesh(earGeometry, fur);
-  leftEar.position.set(-0.3, 0.49, 0.03);
+  leftEar.position.set(-14, 23, 1);
   leftEar.rotation.z = 0.13;
   const rightEar = leftEar.clone();
-  rightEar.position.x = 0.3;
+  rightEar.position.x = 9;
   rightEar.rotation.z = -0.13;
-  head.add(leftEar, rightEar);
+  group.add(leftEar, rightEar);
 
-  const leftArm = createLimb(body, { x: -0.49, y: 0.63, z: 0 }, 0.72, 0.14, jacket);
-  leftArm.rotation.z = 0.48;
-  const rightArm = createLimb(body, { x: 0.49, y: 0.63, z: 0 }, 0.72, 0.14, jacket);
-  rightArm.rotation.z = -0.48;
-  const leftForearm = createLimb(leftArm, { x: 0, y: -0.72, z: 0 }, 0.64, 0.12, shirt);
-  const rightForearm = createLimb(rightArm, { x: 0, y: -0.72, z: 0 }, 0.64, 0.12, shirt);
-
-  const leftLeg = createLimb(body, { x: -0.23, y: -0.48, z: 0 }, 0.82, 0.18, trousers);
-  const rightLeg = createLimb(body, { x: 0.23, y: -0.48, z: 0 }, 0.82, 0.18, trousers);
-  const leftKnee = createLimb(leftLeg, { x: 0, y: -0.82, z: 0 }, 0.76, 0.15, trousers);
-  const rightKnee = createLimb(rightLeg, { x: 0, y: -0.82, z: 0 }, 0.76, 0.15, trousers);
-  addShoe(leftKnee, dark);
-  addShoe(rightKnee, dark);
-
-  return {
-    group,
-    body,
-    head,
-    leftArm,
-    rightArm,
-    leftForearm,
-    rightForearm,
-    leftLeg,
-    rightLeg,
-    leftKnee,
-    rightKnee,
-  };
+  return group;
 }
 
-function createLimb(parent, position, length, radius, material) {
-  const pivot = new THREE.Group();
-  pivot.position.set(position.x, position.y, position.z);
-  const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length - radius * 2, 5, 10), material);
-  mesh.position.y = -length / 2;
-  pivot.add(mesh);
-  parent.add(pivot);
-  return pivot;
+function removeNativeHead(mesh) {
+  const geometry = mesh.geometry;
+  const skinIndex = geometry.getAttribute("skinIndex");
+  const skinWeight = geometry.getAttribute("skinWeight");
+  const index = geometry.index;
+  const headBone = mesh.skeleton?.bones.find((bone) => bone.name === "mixamorigHead");
+  if (!skinIndex || !skinWeight || !index || !headBone) return;
+
+  const headBones = new Set();
+  headBone.traverse((bone) => {
+    if (bone.isBone) headBones.add(bone);
+  });
+  const headIndices = new Set(
+    mesh.skeleton.bones.map((bone, boneIndex) => (headBones.has(bone) ? boneIndex : -1)).filter((boneIndex) => boneIndex >= 0),
+  );
+
+  function headWeight(vertexIndex) {
+    let weight = 0;
+    for (let channel = 0; channel < 4; channel += 1) {
+      const offset = vertexIndex * 4 + channel;
+      if (headIndices.has(skinIndex.array[offset])) {
+        weight += skinWeight.array[offset];
+      }
+    }
+    return weight;
+  }
+
+  const kept = [];
+  for (let position = 0; position < index.count; position += 3) {
+    const a = index.getX(position);
+    const b = index.getX(position + 1);
+    const c = index.getX(position + 2);
+    const averageHeadWeight = (headWeight(a) + headWeight(b) + headWeight(c)) / 3;
+    if (averageHeadWeight < 0.5) kept.push(a, b, c);
+  }
+
+  const trimmed = geometry.clone();
+  trimmed.setIndex(kept);
+  mesh.geometry = trimmed;
 }
 
-function addShoe(lowerLeg, material) {
-  const shoe = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.28, 4, 9), material);
-  shoe.position.set(0, -0.82, 0.13);
-  shoe.rotation.x = Math.PI / 2;
-  lowerLeg.add(shoe);
+function createCatHeadTexture(sourceTexture) {
+  const image = sourceTexture?.image;
+  if (!image) return null;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 512;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#8d7462";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const faceCanvas = document.createElement("canvas");
+  faceCanvas.width = 512;
+  faceCanvas.height = 512;
+  const faceContext = faceCanvas.getContext("2d");
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  faceContext.drawImage(image, 0, 0, sourceWidth, sourceHeight * 0.82, 0, 0, 512, 512);
+  faceContext.globalCompositeOperation = "destination-in";
+  const feather = faceContext.createLinearGradient(0, 0, 512, 0);
+  feather.addColorStop(0, "rgba(255,255,255,0)");
+  feather.addColorStop(0.14, "rgba(255,255,255,1)");
+  feather.addColorStop(0.86, "rgba(255,255,255,1)");
+  feather.addColorStop(1, "rgba(255,255,255,0)");
+  faceContext.fillStyle = feather;
+  faceContext.fillRect(0, 0, 512, 512);
+  context.drawImage(faceCanvas, 0, 0);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  return texture;
+}
+
+function createFabricTexture(sourceTexture) {
+  const image = sourceTexture?.image;
+  if (!image) return null;
+
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  const canvas = document.createElement("canvas");
+  canvas.width = 768;
+  canvas.height = 768;
+  const context = canvas.getContext("2d");
+  context.drawImage(
+    image,
+    sourceWidth * 0.06,
+    sourceHeight * 0.54,
+    sourceWidth * 0.88,
+    sourceHeight * 0.36,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(1.35, 1.35);
+  return texture;
 }
 
 function roundedPlaneGeometry(width, height, radius) {
