@@ -72,21 +72,24 @@
       </section>
     </main>
 
+    <dialog id="newGameDialog" class="confirm-dialog" aria-labelledby="newGameDialogTitle">
+      <form method="dialog" class="confirm-dialog-content">
+        <h2 id="newGameDialogTitle">Start a new game?</h2>
+        <p>Your current game will be replaced.</p>
+        <div class="confirm-dialog-actions">
+          <button type="submit" value="cancel">Cancel</button>
+          <button type="submit" value="confirm" class="confirm-dialog-primary">New Game</button>
+        </div>
+      </form>
+    </dialog>
+
     <div id="dragLayer" class="drag-layer" aria-hidden="true"></div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <section id="winOverlay" class="win-overlay" aria-label="Game won" aria-hidden="true">
       <div id="winScene" class="win-scene" aria-hidden="true"></div>
       <div class="win-stage">
         <h2 class="win-title">Marciência</h2>
-        <div class="win-card" aria-hidden="true">
-          <div class="win-card-inner">
-            <div class="win-card-face win-card-front">
-              <span class="win-rank">A</span>
-              <span class="win-suit">♣</span>
-            </div>
-            <div class="win-card-face win-card-back"></div>
-          </div>
-        </div>
+        <div class="win-card-anchor" aria-hidden="true"></div>
       </div>
       <button id="winNewGame" type="button" class="win-new-game">New Game</button>
     </section>

@@ -23,6 +23,7 @@ let timerId = null;
 let drag = null;
 let toastId = null;
 let lastTap = { cardId: null, time: 0 };
+let lastTouchEnd = 0;
 
 const els = {
   stock: document.querySelector("#stock"),
@@ -35,6 +36,7 @@ const els = {
   status: document.querySelector("#status"),
   toast: document.querySelector("#toast"),
   newGame: document.querySelector("#newGame"),
+  newGameDialog: document.querySelector("#newGameDialog"),
   undo: document.querySelector("#undo"),
   hint: document.querySelector("#hint"),
   winOverlay: document.querySelector("#winOverlay"),
@@ -647,9 +649,24 @@ document.addEventListener("pointercancel", () => {
   }
 });
 document.addEventListener("touchmove", (event) => event.preventDefault(), { passive: false });
+document.addEventListener(
+  "touchend",
+  (event) => {
+    const now = Date.now();
+    if (event.changedTouches.length === 1 && now - lastTouchEnd < 350) event.preventDefault();
+    lastTouchEnd = now;
+  },
+  { passive: false },
+);
 document.addEventListener("gesturestart", (event) => event.preventDefault());
 
-els.newGame.addEventListener("click", newGame);
+els.newGame.addEventListener("click", () => {
+  els.newGameDialog.returnValue = "";
+  els.newGameDialog.showModal();
+});
+els.newGameDialog.addEventListener("close", () => {
+  if (els.newGameDialog.returnValue === "confirm") newGame();
+});
 els.winNewGame.addEventListener("click", newGame);
 els.undo.addEventListener("click", undo);
 els.hint.addEventListener("click", showHint);

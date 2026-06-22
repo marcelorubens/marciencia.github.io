@@ -76,6 +76,63 @@ button:active {
   transform: translateY(1px);
 }
 
+button:focus,
+button:focus-visible {
+  outline: none;
+}
+
+button:focus-visible {
+  background-color: rgba(241, 230, 214, 0.16);
+}
+
+.confirm-dialog {
+  width: min(calc(100vw - 32px), 360px);
+  margin: auto;
+  padding: 0;
+  color: var(--text);
+  border: 1px solid rgba(241, 230, 214, 0.32);
+  border-radius: 8px;
+  background: rgba(6, 30, 21, 0.94);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(18px);
+}
+
+.confirm-dialog::backdrop {
+  background: rgba(2, 14, 10, 0.62);
+  backdrop-filter: blur(4px);
+}
+
+.confirm-dialog-content {
+  padding: 24px;
+}
+
+.confirm-dialog h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: 0;
+}
+
+.confirm-dialog p {
+  margin: 8px 0 22px;
+  color: var(--muted);
+}
+
+.confirm-dialog-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.confirm-dialog-actions button {
+  min-height: 48px;
+}
+
+.confirm-dialog-primary {
+  color: var(--ink);
+  border-color: var(--cream);
+  background: var(--cream);
+}
+
 .game-shell {
   width: min(100%, 920px);
   height: 100svh;
@@ -396,63 +453,9 @@ p {
   text-shadow: 0 4px 28px rgba(0, 0, 0, 0.38);
 }
 
-.win-card {
+.win-card-anchor {
   width: min(46vw, 230px);
   aspect-ratio: 0.704;
-  perspective: 900px;
-  transition: opacity 180ms ease;
-}
-
-.win-overlay.three-ready .win-card {
-  opacity: 0;
-}
-
-.win-card-inner {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  transform-style: preserve-3d;
-  animation: win-card-spin 7s linear infinite;
-}
-
-.win-card-face {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(15, 31, 21, 0.18);
-  border-radius: 14px;
-  backface-visibility: hidden;
-  overflow: hidden;
-  box-shadow: 0 18px 34px -22px rgba(0, 0, 0, 0.7);
-}
-
-.win-card-front {
-  color: var(--ink);
-  background: var(--cream);
-}
-
-.win-card-back {
-  transform: rotateY(180deg);
-  background:
-    linear-gradient(rgba(0, 0, 0, 0.03), rgba(0, 0, 0, 0.08)),
-    url("assets/card-back.jpg") center / cover no-repeat;
-  box-shadow: 0 18px 34px -22px rgba(0, 0, 0, 0.7), inset 0 0 0 6px rgba(243, 238, 228, 0.16);
-}
-
-.win-rank {
-  position: absolute;
-  top: 8%;
-  left: 10%;
-  font-size: clamp(2.4rem, 14vw, 5.5rem);
-  font-weight: 950;
-  line-height: 1;
-}
-
-.win-suit {
-  font-size: clamp(5rem, 29vw, 12rem);
-  font-weight: 950;
-  line-height: 1;
 }
 
 .win-new-game {
@@ -462,22 +465,6 @@ p {
   min-height: 52px;
   background: rgba(7, 36, 26, 0.74);
   backdrop-filter: blur(8px);
-}
-
-@keyframes win-card-spin {
-  from {
-    transform: rotateY(0deg);
-  }
-
-  to {
-    transform: rotateY(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .win-card-inner {
-    animation: none;
-  }
 }
 
 @media (orientation: landscape) and (max-height: 520px) {

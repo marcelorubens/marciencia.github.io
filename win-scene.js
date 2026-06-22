@@ -5,14 +5,16 @@ import { MeshoptDecoder } from "./vendor/libs/meshopt_decoder.module.js";
 const overlay = document.querySelector("#winOverlay");
 const mount = document.querySelector("#winScene");
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-const previewWin = new URLSearchParams(window.location.search).get("win-preview") === "1";
+const searchParams = new URLSearchParams(window.location.search);
+const previewWin = searchParams.get("win-preview") === "1";
+const previewDance = searchParams.get("dance-preview");
 
 if (overlay && previewWin) {
   overlay.classList.add("show");
   overlay.setAttribute("aria-hidden", "false");
 }
 
-if (overlay && mount && !reduceMotion.matches) {
+if (overlay && mount) {
   let initialization;
   const ensureScene = () => {
     if (!overlay.classList.contains("show") || initialization) return;
@@ -44,22 +46,25 @@ async function initWinScene() {
   rimLight.position.set(-5, 2, -4);
   scene.add(rimLight);
 
-  const [catTexture, cardBackTexture, mocapData] = await Promise.all([
+  const [catTexture, cardBackTexture, aceTexture, mocapData] = await Promise.all([
     loadTexture("assets/favicon-cat.jpg", renderer),
     loadTexture("assets/card-back.jpg", renderer),
-    loadMouseyMocap(),
+    loadTexture("assets/ace-clubs.png", renderer),
+    loadDanceMocap(),
   ]);
 
-  const card = createCard(cardBackTexture);
+  const card = createCard(aceTexture, cardBackTexture);
   card.position.y = -0.25;
   scene.add(card);
 
-  const dancer = createRiggedDancer(mocapData, catTexture, cardBackTexture);
+  const dancer = createRiggedDancer(mocapData, catTexture, cardBackTexture, previewDance);
   scene.add(dancer.group);
 
   let frameId = 0;
   let elapsed = 0;
   let previousTime = 0;
+  let wasVisible = overlay.classList.contains("show");
+  overlay.dataset.dance = dancer.currentDance;
 
   function resize() {
     const width = Math.max(1, mount.clientWidth);
@@ -79,7 +84,6 @@ async function initWinScene() {
     const orbit = time * 0.48;
 
     card.rotation.y = time * 0.78;
-    card.rotation.z = Math.sin(time * 0.7) * 0.035;
 
     dancer.group.position.set(Math.cos(orbit) * 2.38, -0.42, Math.sin(orbit) * 1.65);
     dancer.group.rotation.y = time * 0.28;
@@ -96,7 +100,16 @@ async function initWinScene() {
   }
 
   function syncAnimation() {
-    const visible = overlay.classList.contains("show");
+    const shown = overlay.classList.contains("show");
+    if (shown && !wasVisible) {
+      elapsed = 0;
+      overlay.dataset.dance = dancer.selectRandomDance();
+      update(0);
+      renderer.render(scene, camera);
+    }
+    wasVisible = shown;
+
+    const visible = shown && !reduceMotion.matches;
     if (visible && !frameId) {
       previousTime = 0;
       frameId = window.requestAnimationFrame(renderFrame);
@@ -128,22 +141,30 @@ async function loadTexture(path, renderer) {
   }
 }
 
-async function loadMouseyMocap() {
+async function loadDanceMocap() {
   const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-  const gltf = await loader.loadAsync("vendor/motions/mousey-snake-hip-hop.glb");
-  const clip = gltf.animations.find((animation) => animation.tracks.length > 0);
-  return { root: gltf.scene, clip };
+  const [mousey, samba] = await Promise.all([
+    loader.loadAsync("vendor/motions/mousey-snake-hip-hop.glb"),
+    loader.loadAsync("vendor/motions/mousey-samba-dancing.glb"),
+  ]);
+  return {
+    root: mousey.scene,
+    dances: [
+      { name: "hip-hop", clip: mousey.animations.find((animation) => animation.tracks.length > 0) },
+      { name: "samba", clip: samba.animations.find((animation) => animation.tracks.length > 0) },
+    ],
+  };
 }
 
-function createCard(backTexture) {
+function createCard(frontTexture, backTexture) {
   const group = new THREE.Group();
   const width = 2.24;
   const height = 3.18;
   const geometry = roundedPlaneGeometry(width, height, 0.16);
-  const frontTexture = createAceTexture();
+  const adjustedFrontTexture = createReducedClubTexture(frontTexture);
   const front = new THREE.Mesh(
     geometry,
-    new THREE.MeshStandardMaterial({ map: frontTexture, roughness: 0.72, metalness: 0.02 }),
+    new THREE.MeshStandardMaterial({ map: adjustedFrontTexture, roughness: 0.72, metalness: 0.02 }),
   );
   front.position.z = 0.004;
 
@@ -163,9 +184,11 @@ function createCard(backTexture) {
   return group;
 }
 
-function createRiggedDancer(mocapData, catTexture, duvetTexture) {
+function createRiggedDancer(mocapData, catTexture, duvetTexture, initialDance) {
   const group = new THREE.Group();
   const model = mocapData.root;
+  const rigNodes = new Set();
+  model.traverse((node) => rigNodes.add(node.name));
   const fabricTexture = createFabricTexture(duvetTexture);
   const headTexture = createCatHeadTexture(catTexture);
   const floral = new THREE.MeshStandardMaterial({
@@ -184,16 +207,161 @@ function createRiggedDancer(mocapData, catTexture, duvetTexture) {
   const headBone = model.getObjectByName("mixamorigHead");
   if (headBone) headBone.add(createRiggedCatHead(headTexture));
 
-  model.scale.setScalar(0.0235);
+  model.scale.setScalar(0.0282);
   model.position.y = -1.65;
   group.add(model);
 
   const mixer = new THREE.AnimationMixer(model);
-  const action = mixer.clipAction(mocapData.clip);
-  action.setLoop(THREE.LoopRepeat, Infinity);
-  action.play();
+  const actions = mocapData.dances.map((dance) => {
+    const clip = dance.clip.clone();
+    clip.tracks = clip.tracks.filter((track) => rigNodes.has(track.name.split(".")[0]));
+    return { ...dance, clip, action: mixer.clipAction(clip) };
+  });
+  const result = {
+    group,
+    mixer,
+    duration: 0,
+    currentDance: "",
+    selectRandomDance(preferredDance) {
+      const selected = actions.find((dance) => dance.name === preferredDance) || actions[Math.floor(Math.random() * actions.length)];
+      mixer.stopAllAction();
+      selected.action.reset();
+      selected.action.setLoop(THREE.LoopRepeat, Infinity);
+      selected.action.play();
+      result.duration = selected.clip.duration;
+      result.currentDance = selected.name;
+      return selected.name;
+    },
+  };
+  result.selectRandomDance(initialDance);
 
-  return { group, mixer, duration: mocapData.clip.duration };
+  return result;
+}
+
+function createReducedClubTexture(sourceTexture) {
+  const image = sourceTexture?.image;
+  if (!image) return sourceTexture;
+
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.drawImage(image, 0, 0, width, height);
+
+  const pixels = context.getImageData(0, 0, width, height).data;
+  const centerX = Math.floor(width / 2);
+  const bounds = { top: height, right: centerX, bottom: 0 };
+  for (let y = Math.floor(height * 0.25); y < Math.floor(height * 0.9); y += 1) {
+    for (let x = centerX; x < Math.floor(width * 0.85); x += 1) {
+      const offset = (y * width + x) * 4;
+      const luminance = pixels[offset] * 0.2126 + pixels[offset + 1] * 0.7152 + pixels[offset + 2] * 0.0722;
+      if (luminance >= 200) continue;
+      bounds.top = Math.min(bounds.top, y);
+      bounds.right = Math.max(bounds.right, x);
+      bounds.bottom = Math.max(bounds.bottom, y);
+    }
+  }
+
+  if (bounds.right <= centerX || bounds.bottom <= bounds.top) return sourceTexture;
+
+  const padding = 4;
+  const halfWidth = bounds.right - centerX + padding;
+  const sourceX = centerX - halfWidth;
+  const sourceY = Math.max(0, bounds.top - padding);
+  const sourceWidth = halfWidth * 2;
+  const sourceHeight = Math.min(height - sourceY, bounds.bottom - bounds.top + padding * 2);
+  const centerY = sourceY + sourceHeight / 2;
+  const scale = 0.8;
+  const background = context.getImageData(Math.floor(width / 2), Math.floor(height * 0.15), 1, 1).data;
+  const clubCanvas = document.createElement("canvas");
+  clubCanvas.width = sourceWidth;
+  clubCanvas.height = sourceHeight;
+  const clubContext = clubCanvas.getContext("2d");
+
+  clubContext.drawImage(image, centerX, sourceY, halfWidth, sourceHeight, halfWidth, 0, halfWidth, sourceHeight);
+  clubContext.save();
+  clubContext.translate(halfWidth, 0);
+  clubContext.scale(-1, 1);
+  clubContext.drawImage(image, centerX, sourceY, halfWidth, sourceHeight, 0, 0, halfWidth, sourceHeight);
+  clubContext.restore();
+
+  context.fillStyle = `rgb(${background[0]}, ${background[1]}, ${background[2]})`;
+  context.fillRect(sourceX, sourceY, sourceWidth, sourceHeight);
+  context.drawImage(
+    clubCanvas,
+    centerX - (sourceWidth * scale) / 2,
+    centerY - (sourceHeight * scale) / 2,
+    sourceWidth * scale,
+    sourceHeight * scale,
+  );
+
+  const aceTopBounds = { left: width, right: 0, top: height };
+  for (let y = Math.floor(height * 0.08); y < Math.floor(height * 0.27); y += 1) {
+    for (let x = Math.floor(width * 0.05); x < Math.floor(width * 0.45); x += 1) {
+      const offset = (y * width + x) * 4;
+      const luminance = pixels[offset] * 0.2126 + pixels[offset + 1] * 0.7152 + pixels[offset + 2] * 0.0722;
+      if (luminance >= 200) continue;
+      aceTopBounds.left = Math.min(aceTopBounds.left, x);
+      aceTopBounds.right = Math.max(aceTopBounds.right, x);
+      aceTopBounds.top = Math.min(aceTopBounds.top, y);
+    }
+  }
+
+  const aceCenterX = Math.round((aceTopBounds.left + aceTopBounds.right) / 2);
+  const aceBounds = { left: aceCenterX, bottom: aceTopBounds.top };
+  for (let y = aceTopBounds.top; y < Math.floor(height * 0.35); y += 1) {
+    for (let x = Math.floor(width * 0.05); x <= aceCenterX; x += 1) {
+      const offset = (y * width + x) * 4;
+      const luminance = pixels[offset] * 0.2126 + pixels[offset + 1] * 0.7152 + pixels[offset + 2] * 0.0722;
+      if (luminance >= 200) continue;
+      aceBounds.left = Math.min(aceBounds.left, x);
+      aceBounds.bottom = Math.max(aceBounds.bottom, y);
+    }
+  }
+
+  const aceHalfWidth = aceCenterX - aceBounds.left + padding;
+  const aceSourceX = aceCenterX - aceHalfWidth;
+  const aceSourceY = Math.max(0, aceTopBounds.top - padding);
+  const aceHeight = aceBounds.bottom - aceTopBounds.top + padding * 2;
+  const aceCanvas = document.createElement("canvas");
+  aceCanvas.width = aceHalfWidth * 2;
+  aceCanvas.height = aceHeight;
+  const aceContext = aceCanvas.getContext("2d");
+  aceContext.drawImage(image, aceSourceX, aceSourceY, aceHalfWidth, aceHeight, 0, 0, aceHalfWidth, aceHeight);
+  aceContext.save();
+  aceContext.translate(aceHalfWidth * 2, 0);
+  aceContext.scale(-1, 1);
+  aceContext.drawImage(image, aceSourceX, aceSourceY, aceHalfWidth, aceHeight, 0, 0, aceHalfWidth, aceHeight);
+  aceContext.restore();
+
+  const acePixels = aceContext.getImageData(0, 0, aceCanvas.width, aceCanvas.height);
+  for (let offset = 0; offset < acePixels.data.length; offset += 4) {
+    const luminance =
+      acePixels.data[offset] * 0.2126 + acePixels.data[offset + 1] * 0.7152 + acePixels.data[offset + 2] * 0.0722;
+    if (luminance >= 220) acePixels.data[offset + 3] = 0;
+  }
+  aceContext.putImageData(acePixels, 0, 0);
+  context.drawImage(aceCanvas, aceSourceX, aceSourceY);
+
+  const edgeHeight = Math.max(1, Math.ceil(height * 0.015));
+  const edgePixels = context.getImageData(0, 0, width, edgeHeight);
+  for (let offset = 0; offset < edgePixels.data.length; offset += 4) {
+    const luminance =
+      edgePixels.data[offset] * 0.2126 + edgePixels.data[offset + 1] * 0.7152 + edgePixels.data[offset + 2] * 0.0722;
+    if (luminance >= 120) continue;
+    edgePixels.data[offset] = background[0];
+    edgePixels.data[offset + 1] = background[1];
+    edgePixels.data[offset + 2] = background[2];
+    edgePixels.data[offset + 3] = 255;
+  }
+  context.putImageData(edgePixels, 0, 0);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = sourceTexture.anisotropy;
+  return texture;
 }
 
 function createRiggedCatHead(headTexture) {
@@ -351,25 +519,4 @@ function roundedPlaneGeometry(width, height, radius) {
     uvs.setXY(i, positions.getX(i) / width + 0.5, positions.getY(i) / height + 0.5);
   }
   return geometry;
-}
-
-function createAceTexture() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 768;
-  canvas.height = 1090;
-  const context = canvas.getContext("2d");
-  context.fillStyle = "#f5eadb";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#172019";
-  context.font = "900 150px Georgia, serif";
-  context.textAlign = "left";
-  context.textBaseline = "top";
-  context.fillText("A", 72, 54);
-  context.font = "720px Georgia, serif";
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText("♣", canvas.width / 2, canvas.height * 0.58);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
 }
